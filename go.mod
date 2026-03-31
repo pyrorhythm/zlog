@@ -1,4 +1,4 @@
-module zlog
+module github.com/pyrorhythm/zlog
 
 go 1.26.1
 
