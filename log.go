@@ -136,3 +136,7 @@ func WithCtx(ctx context.Context, l zerolog.Logger) context.Context {
 func Span(ctx context.Context, span string) context.Context {
 	return Ctx(ctx).With().Str("span", span).Logger().WithContext(ctx)
 }
+
+func Introspect(ctx context.Context, fn func(*zerolog.Logger) zerolog.Logger) context.Context {
+	return WithCtx(ctx, fn(Ctx(ctx)))
+}
