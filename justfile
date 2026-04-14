@@ -2,9 +2,6 @@ set dotenv-load := true
 
 module_url := `head -n 1 go.mod | cut -d ' ' -f 2`
 
-test:
-	go test ./...
-
 updsum SEMVER:
 	sleep 3
 	curl https://sum.golang.org/lookup/{{module_url}}@{{SEMVER}}
@@ -18,4 +15,4 @@ commit-push SEMVER:
     git tag {{SEMVER}}
     git push ; git push origin {{SEMVER}}
 
-release SEMVER: test (commit-push SEMVER) (updsum SEMVER)
+release SEMVER: (commit-push SEMVER) (updsum SEMVER)
