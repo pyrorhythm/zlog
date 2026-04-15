@@ -18,16 +18,6 @@ var (
 	colorTimestr = color.New(color.FgCyan, color.Italic)
 )
 
-func MultiReplaceAttr(fns ...func([]string, slog.Attr) slog.Attr) func([]string, slog.Attr) slog.Attr {
-	return func(groups []string, a slog.Attr) slog.Attr {
-		for _, fn := range fns {
-			a = fn(groups, a)
-		}
-
-		return a
-	}
-}
-
 func FormatError(_ []string, a slog.Attr) slog.Attr {
 	switch x := a.Value.Any().(type) {
 	case error:
@@ -43,7 +33,7 @@ type formattedHandler struct {
 	attrs       []slog.Attr
 	groups      []string
 	modifiers   []modifier
-	replaceAttr func([]string, slog.Attr) slog.Attr
+	replaceAttr []func([]string, slog.Attr) slog.Attr
 }
 
 func (h formattedHandler) Enabled(ctx context.Context, level slog.Level) bool {
@@ -70,7 +60,10 @@ func (h formattedHandler) WithGroup(name string) slog.Handler {
 	}
 }
 
-func (h formattedHandler) applyModifiers(ctx context.Context, r slog.Record) (context.Context, slog.Record) {
+func (h formattedHandler) applyModifiers(
+	ctx context.Context,
+	r slog.Record,
+) (context.Context, slog.Record) {
 	for _, m := range h.modifiers {
 		ctx, r = m(ctx, r)
 	}
@@ -78,9 +71,22 @@ func (h formattedHandler) applyModifiers(ctx context.Context, r slog.Record) (co
 	return ctx, r
 }
 
+func (h formattedHandler) applyReplacers(a slog.Attr) slog.Attr {
+	if a.Value.Kind() == slog.KindGroup {
+		return a
+	}
+
+	for _, r := range h.replaceAttr {
+		a = r(h.groups, a)
+	}
+
+	return a
+}
+
 func (h formattedHandler) attrsToMap(r slog.Record) map[string]any {
 	fields := make(map[string]any, r.NumAttrs())
 	r.Attrs(func(a slog.Attr) bool {
+		a = h.applyReplacers(a)
 		fields[a.Key] = a.Value.Any()
 
 		return true
@@ -121,7 +127,6 @@ func New(minLvl ...slog.Level) *slog.Logger {
 		out:         os.Stdout,
 		lowest:      lvl,
 		modifiers:   []modifier{ContextModifier},
-		replaceAttr: MultiReplaceAttr(NewLevels, FormatError),
+		replaceAttr: []func([]string, slog.Attr) slog.Attr{NewLevels, FormatError},
 	})
-
 }
