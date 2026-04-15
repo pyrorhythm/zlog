@@ -1,160 +1,63 @@
 package zlog
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
-
-	"github.com/fatih/color"
 )
 
-var (
-	//
-	colorBody    = color.New(color.FgHiWhite, color.Italic)
-	colorMessage = color.RGB(170, 170, 170)
-	colorTimestr = color.New(color.FgCyan, color.Italic)
-)
+// Sink configures a single log output destination.
+type Sink struct {
+	Writer io.Writer
+	Level  slog.Level
+	Style  Style
+}
 
-func FormatError(_ []string, a slog.Attr) slog.Attr {
-	switch x := a.Value.Any().(type) {
-	case error:
-		a = slog.GroupAttrs(a.Key, formatError(x)...)
+// Options configures the logger.
+type Options struct {
+	// Middleware is applied globally to every record before routing to sinks.
+	Middleware []Middleware
+	// Sinks defines output destinations.
+	Sinks []Sink
+}
+
+// New creates a *slog.Logger. Without arguments, outputs colored pretty-print to stdout.
+func New(opts ...Options) *slog.Logger {
+	var opt Options
+	if len(opts) > 0 {
+		opt = opts[0]
 	}
 
-	return a
-}
-
-type formattedHandler struct {
-	out         io.Writer
-	lowest      slog.Level
-	attrs       []slog.Attr
-	groups      []string
-	modifiers   []modifier
-	replaceAttr []func([]string, slog.Attr) slog.Attr
-}
-
-func (h formattedHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return level >= getLevel(ctx, h.lowest)
-}
-
-func (h formattedHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &formattedHandler{
-		out:       h.out,
-		lowest:    h.lowest,
-		attrs:     append(h.attrs, attrs...),
-		groups:    h.groups,
-		modifiers: h.modifiers,
-	}
-}
-
-func (h formattedHandler) WithGroup(name string) slog.Handler {
-	return &formattedHandler{
-		out:       h.out,
-		lowest:    h.lowest,
-		attrs:     h.attrs,
-		groups:    append(h.groups, name),
-		modifiers: h.modifiers,
-	}
-}
-
-func (h formattedHandler) applyModifiers(
-	ctx context.Context,
-	r slog.Record,
-) (context.Context, slog.Record) {
-	for _, m := range h.modifiers {
-		ctx, r = m(ctx, r)
+	if len(opt.Middleware) == 0 {
+		opt.Middleware = defaultMiddleware()
 	}
 
-	return ctx, r
-}
-
-func (h formattedHandler) applyReplacers(a slog.Attr) slog.Attr {
-	if a.Value.Kind() == slog.KindGroup {
-		return a
+	if len(opt.Sinks) == 0 {
+		opt.Sinks = []Sink{{
+			Writer: os.Stdout,
+			Level:  LevelDebug,
+			Style:  DefaultStyle,
+		}}
 	}
 
-	for _, r := range h.replaceAttr {
-		a = r(h.groups, a)
-	}
-
-	return a
-}
-
-func attrToValue(v slog.Value) any {
-	v = v.Resolve()
-	switch v.Kind() {
-	case slog.KindGroup:
-		m := make(map[string]any, len(v.Group()))
-		for _, a := range v.Group() {
-			m[a.Key] = attrToValue(a.Value)
+	handlers := make([]slog.Handler, len(opt.Sinks))
+	for i, sink := range opt.Sinks {
+		if sink.Writer == nil {
+			sink.Writer = os.Stdout
 		}
-		return m
-	case slog.KindString:
-		return v.String()
-	case slog.KindInt64:
-		return v.Int64()
-	case slog.KindUint64:
-		return v.Uint64()
-	case slog.KindFloat64:
-		return v.Float64()
-	case slog.KindBool:
-		return v.Bool()
-	case slog.KindTime:
-		return v.Time()
-	case slog.KindDuration:
-		return v.Duration()
-	default:
-		return v.Any()
-	}
-}
-
-func (h formattedHandler) attrsToMap(r slog.Record) map[string]any {
-	fields := make(map[string]any, r.NumAttrs())
-	r.Attrs(func(a slog.Attr) bool {
-		a = h.applyReplacers(a)
-		fields[a.Key] = attrToValue(a.Value)
-
-		return true
-	})
-
-	return fields
-}
-
-func (h formattedHandler) Handle(ctx context.Context, r slog.Record) error {
-	defer executeLevelSpecificActions(r)
-
-	r.AddAttrs(h.attrs...)
-	ctx, r = h.applyModifiers(ctx, r)
-	level := formatLevel(r)
-	fields := h.attrsToMap(r)
-
-	bodyBytes, err := json.MarshalIndent(fields, "", "  ")
-	if err != nil {
-		return err
+		handlers[i] = newHandler(sink.Writer, sink.Level, sink.Style, opt.Middleware)
 	}
 
-	body := colorBody.Sprint(string(bodyBytes))
-	timeStr := colorTimestr.Sprint(r.Time.Format("[_2/01 15:04:05Z07]"))
-	msg := colorMessage.Sprint(r.Message)
-
-	fmt.Fprintln(h.out, timeStr, level, msg, body)
-
-	return nil
+	if len(handlers) == 1 {
+		return slog.New(handlers[0])
+	}
+	return slog.New(&multiHandler{handlers: handlers})
 }
 
-func New(minLvl ...slog.Level) *slog.Logger {
-	lvl := LevelDebug
-	if len(minLvl) != 0 {
-		lvl = minLvl[0]
+func defaultMiddleware() []Middleware {
+	return []Middleware{
+		ContextMiddleware,
+		ReplaceAttributeMiddleware(
+			MultiReplaceAttribute(FormatError, NewLevels)),
 	}
-
-	return slog.New(&formattedHandler{
-		out:         os.Stdout,
-		lowest:      lvl,
-		modifiers:   []modifier{ContextModifier},
-		replaceAttr: []func([]string, slog.Attr) slog.Attr{NewLevels, FormatError},
-	})
 }

@@ -13,7 +13,7 @@ type frame struct {
 	Line     int    `json:"line"`
 }
 
-func (f *frame) convert(p errors.Frame) {
+func (f *frame) convert(p errors.Frame) *frame {
 	pc := uintptr(p) - 1
 	function := runtime.FuncForPC(pc)
 	functionName := "<unknown>"
@@ -28,6 +28,17 @@ func (f *frame) convert(p errors.Frame) {
 		Line:     line,
 		Source:   file,
 	}
+
+	return f
+}
+
+// FormatError is a replaceAttr-compatible function that expands error attributes
+// into a group with msg, cause, and stack frames.
+func FormatError(a slog.Attr) slog.Attr {
+	if x, ok := a.Value.Any().(error); ok {
+		a = slog.GroupAttrs(a.Key, formatError(x)...)
+	}
+	return a
 }
 
 func formatError(err error) []slog.Attr {
@@ -38,7 +49,7 @@ func formatError(err error) []slog.Attr {
 	}
 
 	errGroup = append(errGroup,
-		slog.Any("msg", err))
+		slog.String("msg", err.Error()))
 
 	if cerr, ok := err.(interface {
 		Cause() error
@@ -54,8 +65,7 @@ func formatError(err error) []slog.Attr {
 		frames := make([]*frame, len(stackTrace))
 
 		for i, fr := range stackTrace {
-			frames[i] = new(frame)
-			frames[i].convert(fr)
+			frames[i] = new(frame).convert(fr)
 		}
 
 		errGroup = append(errGroup,

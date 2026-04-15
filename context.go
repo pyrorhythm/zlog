@@ -7,6 +7,8 @@ import (
 
 type ctxLevelKey struct{}
 
+// SetLevel stores a dynamic minimum log level in the context.
+// The handler will use this level instead of its configured minimum.
 func SetLevel(ctx context.Context, level slog.Level) context.Context {
 	return context.WithValue(ctx, ctxLevelKey{}, level)
 }
