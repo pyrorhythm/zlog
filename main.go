@@ -83,11 +83,39 @@ func (h formattedHandler) applyReplacers(a slog.Attr) slog.Attr {
 	return a
 }
 
+func attrToValue(v slog.Value) any {
+	v = v.Resolve()
+	switch v.Kind() {
+	case slog.KindGroup:
+		m := make(map[string]any, len(v.Group()))
+		for _, a := range v.Group() {
+			m[a.Key] = attrToValue(a.Value)
+		}
+		return m
+	case slog.KindString:
+		return v.String()
+	case slog.KindInt64:
+		return v.Int64()
+	case slog.KindUint64:
+		return v.Uint64()
+	case slog.KindFloat64:
+		return v.Float64()
+	case slog.KindBool:
+		return v.Bool()
+	case slog.KindTime:
+		return v.Time()
+	case slog.KindDuration:
+		return v.Duration()
+	default:
+		return v.Any()
+	}
+}
+
 func (h formattedHandler) attrsToMap(r slog.Record) map[string]any {
 	fields := make(map[string]any, r.NumAttrs())
 	r.Attrs(func(a slog.Attr) bool {
 		a = h.applyReplacers(a)
-		fields[a.Key] = a.Value.Any()
+		fields[a.Key] = attrToValue(a.Value)
 
 		return true
 	})
